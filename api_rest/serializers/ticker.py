@@ -12,3 +12,9 @@ class TickerSerializer(serializers.ModelSerializer):
   def get_quotes(self, obj): 
     quotes_queryset = obj.quotes.all().order_by('-date') 
     return QuoteSerializer(quotes_queryset, many=True).data
+  
+class TickerListSerializer(serializers.ModelSerializer):
+  class Meta:
+    model = Ticker
+    fields = fields = ['id', 'symbol', 'name', 'exchange', 'asset_type', 'ipo_date', 'delisting_date', 'status']
+    ordering = ['-date']

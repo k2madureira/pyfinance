@@ -188,7 +188,7 @@ def rsi(quotes: list, period:int):
         if i >= 2:
             rsi_quotes.append({
                 **quotes[i],
-                "rsi": rsi_values[i],
+                "rsi": f'{rsi_values[i]:.2f}'
             })
         else:
             rsi_quotes.append({

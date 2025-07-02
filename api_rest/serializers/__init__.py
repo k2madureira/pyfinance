@@ -1,2 +1,2 @@
 from .quote import QuoteSerializer, QuoteTickerSerializer
-from .ticker import TickerSerializer
+from .ticker import TickerSerializer, TickerListSerializer

@@ -15,7 +15,7 @@ from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 
 from ..models import Ticker, Quote
-from ..serializers import TickerSerializer
+from ..serializers import TickerSerializer, TickerListSerializer
 from ..utils import get_tickers_info, get_sma_days, detecting_splits, atypical_volume, rsi, quotes_by_date, console_log, console_error
 
 
@@ -35,14 +35,14 @@ class StandardResultsSetPagination(PageNumberPagination):
 class TickersView(APIView):
     def get(self, request):
         tickers = Ticker.objects.all().order_by('symbol')
-
         symbols_list = request.query_params.getlist('symbol')
         if symbols_list:
             tickers = tickers.filter(symbol__in=symbols_list)
 
+        
         paginator = StandardResultsSetPagination()
         page = paginator.paginate_queryset(tickers, request, view=self)
-        serializer = TickerSerializer(page, many=True)
+        serializer = TickerListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
 
@@ -68,17 +68,20 @@ class TickersView(APIView):
 class TickerWithSymbolView(APIView):
     def get(self, request, symbol):
         try:
-            now_utc = timezone.now()       
-            yesterday_utc = now_utc - timedelta(days=1)          
-            yesterday = yesterday_utc.date()
-
-
+                          
             sma_days = get_sma_days(request.query_params.get('sma_days'))
+        
+            sma_days_volume = int(request.query_params.get('sma_days_volume')) if  request.query_params.get('sma_days_volume') else 10
+            total_days = int(request.query_params.get('total_days')) if  request.query_params.get('total_days') else 30
+            threshold = float(request.query_params.get('threshold')) if  request.query_params.get('threshold') else 1.5
+            rsi_days = int(request.query_params.get('rsi_days')) if  request.query_params.get('rsi_days') else 14
+            
+         
             start_date = request.query_params.get('start_date')
             if start_date:
                 start_date = datetime.strptime(request.query_params.get('start_date'), '%Y-%m-%d')
             else:
-                start_date = (timezone.now() - timedelta(days=30))
+                start_date = (timezone.now() - timedelta(days=int(total_days)))
             
 
             end_date = request.query_params.get('end_date')
@@ -88,25 +91,7 @@ class TickerWithSymbolView(APIView):
                 end_date = datetime.now()
 
             
-            rsi_days = request.query_params.get('rsi_days')
-            if rsi_days:
-                rsi_days = int(rsi_days)
-            else:
-                rsi_days = 14
-
-            sma_days_volume = request.query_params.get('sma_days_volume')
-            if sma_days_volume:
-                sma_days_volume = int(sma_days_volume)
-            else:
-                sma_days_volume = 10
-
             
-            threshold= request.query_params.get('threshold')
-            if threshold:
-                threshold = float(threshold)
-            else:
-                threshold = 1.5
-          
             ticker = Ticker.objects.prefetch_related('quotes').get(symbol=symbol)
             serialized = TickerSerializer(ticker).data
 
@@ -123,10 +108,10 @@ class TickerWithSymbolView(APIView):
                 if quote_date_str:
                     
                     try:
-            
                         quote_date = datetime.fromisoformat(quote_date_str.replace('Z', '+00:00')).date()
                         quote_created_at = datetime.fromisoformat(quote_created_at_str.replace('Z', '+00:00')).date()
-                   
+
+                        yesterday = (timezone.now()  - timedelta(days=1)  ).date()
                         if quote_date < yesterday or quote_created_at < yesterday: 
                             needs_api_fetch = True
 
@@ -143,10 +128,10 @@ class TickerWithSymbolView(APIView):
                 serialized = TickerSerializer(ticker).data
 
 
-            quotes = serialized.get('quotes', [])
-            quotes = quotes_by_date(quotes, start_date, end_date)
+            all_quotes = serialized.get('quotes', [])
+            quotes = quotes_by_date(all_quotes, start_date, end_date)
 
-            print(quotes)
+          
             quotes_sma = quotes[:sma_days] 
             quote_prices = []
             for q in quotes_sma:
@@ -162,7 +147,7 @@ class TickerWithSymbolView(APIView):
             rsi_quotes = quotes
             serialized['sma_days'] = sma_days
             serialized['sma'] = f'{sma_calculada:.2f}'
-            serialized['splits'] = detecting_splits(quotes)
+            serialized['splits'] = detecting_splits(all_quotes)
             serialized['quotes']= quotes
             serialized['atipcal_volumes'] = atypical_volume(rsi_quotes, sma_days_volume, threshold)
             serialized['rsi'] = rsi(quotes[:rsi_days+14], rsi_days)
