@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 import requests
 import pandas as pd
 import io 
@@ -6,6 +6,7 @@ import os
 
 from django.db import transaction
 from django.core.management.base import CommandError
+from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -14,7 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 
 from ..models import Ticker, Quote
 from ..serializers import TickerSerializer
-
+from ..utils import get_tickers_info, console_log
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -65,112 +66,48 @@ class TickersView(APIView):
 
 class TickerWithSymbolView(APIView):
     def get(self, request, symbol):
-        ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
-        ALPHA_VANTAGE_BASE_URL = os.getenv('ALPHA_VANTAGE_BASE_URL')
         try:
 
             ticker = Ticker.objects.prefetch_related('quotes').get(symbol=symbol)
             serialized = TickerSerializer(ticker).data
 
             quotes_data = serialized.get('quotes', []) 
-
-            first_quote_date = None
             needs_api_fetch = False
 
             if not quotes_data:
                 needs_api_fetch = True
             else:    
-                first_quote = quotes_data[0]
-                first_quote_date_str = first_quote.get('date')
+                quote = quotes_data[0]
+                quote_date_str = quote.get('date')
+                quote_created_at_str = quote.get('created_at')
 
-                if first_quote_date_str:
+                if quote_date_str:
                     
                     try:
             
-                        first_quote_date = datetime.fromisoformat(first_quote_date_str.replace('Z', '+00:00')).date()
-                        today_utc = datetime.now(timezone.utc).date()
-                        if first_quote_date < today_utc: 
+                        quote_date = datetime.fromisoformat(quote_date_str.replace('Z', '+00:00')).date()
+                        quote_created_at = datetime.fromisoformat(quote_created_at_str.replace('Z', '+00:00')).date()
+                      
+                        now_utc = timezone.now()       
+                        yesterday_utc = now_utc - timedelta(days=1)          
+                        yesterday = yesterday_utc.date()
+
+                   
+                        if quote_date < yesterday or quote_created_at < yesterday: 
                             needs_api_fetch = True
 
                     except ValueError:
-                        print(f"Could not parse date string: {first_quote_date_str}")
+                        print(f"Could not parse date string: {quote_date_str}")
                         needs_api_fetch = True
                 else:
                      needs_api_fetch = True
 
             if needs_api_fetch:
 
-                try:
-                    params = {
-                        "symbol": symbol,
-                        "function": "TIME_SERIES_DAILY",
-                        "apikey": ALPHA_VANTAGE_API_KEY,
-                        "outputsize": "full" 
-                    }
-
-                    response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
-                    response.raise_for_status() 
-                    data = response.json()
-
-                    
-                    if "Error Message" in data:
-                        return Response(
-                            {'error': f"Alpha Vantage API Error: {data['Error Message']}"}, 
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                        )
-                    if "Note" in data:
-                        
-                        return Response(
-                            {'error': f"Alpha Vantage API Note: {data['Note']}. Rate limit might be exceeded."}, 
-                            status=status.HTTP_429_TOO_MANY_REQUESTS 
-                        )
-                    if "Time Series (Daily)" not in data:
-                        
-                        return Response(
-                            {'error': f"Daily time series data not found for symbol: {symbol}"}, 
-                            status=status.HTTP_404_NOT_FOUND
-                        )
-                    
-                    time_series_data = data["Time Series (Daily)"]
-
-                    
-                    df = pd.DataFrame.from_dict(time_series_data, orient='index')
-                    df.index = pd.to_datetime(df.index)
-
-                    df = df.rename(columns={'4. close': 'close', '5. volume': 'volume'})
-
-                    for col in ['close', 'volume']:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                    
-                    quotes_from_api_list = df.reset_index().rename(columns={'index': 'date'}).to_dict(orient='records')
-
-                    for q_data in quotes_from_api_list:
-                        quote_date = q_data['date'].to_pydatetime()
-                        quote_date = quote_date.replace(tzinfo=timezone.utc)
-
-                        Quote.objects.update_or_create(
-                            ticker=ticker,
-                            date=quote_date,
-                            defaults={
-                                'close_price': q_data['close'],
-                                'volume': q_data['volume'],
-                            }
-                        )
-                    ticker = Ticker.objects.prefetch_related('quotes').get(symbol=symbol)
-                    serialized = TickerSerializer(ticker).data
-
-                    return Response(serialized)
-                
-                except requests.exceptions.RequestException as e:
-                    return Response(
-                        {'error': f'Lost connection to Alpha Vantage API: {str(e)}'},
-                        status=status.HTTP_503_SERVICE_UNAVAILABLE
-                    )
-                except Exception as e:
-                    return Response(
-                        {'error': f'Error processing API data: {str(e)}'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    ) 
+                get_tickers_info([symbol])
+                ticker = Ticker.objects.prefetch_related('quotes').get(symbol=symbol)
+                serialized = TickerSerializer(ticker).data
+              
                 
             return Response(serialized)
         

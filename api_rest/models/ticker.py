@@ -9,6 +9,8 @@ class Ticker(models.Model):
   ipo_date = models.DateTimeField(default=timezone.now)
   delisting_date = models.DateTimeField(null=True, blank=True, default=None)
   status = models.CharField(max_length=20)
+  created_at = models.DateTimeField(auto_now_add=True)
+  updated_at = models.DateTimeField(auto_now=True)
 
   def __str__(self):
     return f'Ticker: {self.symbol} | Name: {self.name}'
