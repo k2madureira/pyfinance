@@ -55,14 +55,19 @@ class QuotesView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
 
-
+ 
 class QuoteWithTickerView(APIView):
     def get(self, request, ticker):
 
         try:
-            quote = Quote.objects.get(ticker=ticker)
-            serializer = QuoteSerializer(quote)
-            return Response(serializer.data)
+         
+            quotes = Quote.objects.filter(ticker=ticker).order_by('date')
+
+            paginator = StandardResultsSetPagination()
+            page = paginator.paginate_queryset(quotes, request, view=self)
+            serializer = QuoteSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+    
         except Quote.DoesNotExist:
             return Response({'error': 'Ticker not found'}, status=status.HTTP_404_NOT_FOUND)
        
